@@ -7,6 +7,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.hardware.camera2.CameraManager;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
@@ -14,6 +15,8 @@ import android.view.View;
 import android.view.animation.Animation;
 import android.view.animation.ScaleAnimation;
 import android.os.Vibrator;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 public class MainActivity extends Activity {
     private boolean torchOn = false;
@@ -22,6 +25,8 @@ public class MainActivity extends Activity {
     private View torchButton;
     private TextView statusText;
     private Vibrator vibrator;
+    private TextView torchIcon;
+    private static final int CAMERA_PERMISSION_REQUEST = 100;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -81,7 +86,7 @@ public class MainActivity extends Activity {
         torchButton.setElevation(16);
         
         // Torch icon (text)
-        TextView torchIcon = new TextView(this);
+        torchIcon = new TextView(this);
         torchIcon.setText("🔦");
         torchIcon.setTextSize(64);
         torchIcon.setTextColor(Color.WHITE);
@@ -119,27 +124,55 @@ public class MainActivity extends Activity {
         
         setContentView(root);
         
-        // Setup camera
+        // Check and request camera permission
+        checkCameraPermission();
+        
+        // Button click
+        torchButton.setOnClickListener(v -> {
+            if (hasCameraPermission()) {
+                if (vibrator != null) vibrator.vibrate(30);
+                animateButton();
+                toggleTorch();
+            } else {
+                checkCameraPermission();
+            }
+        });
+    }
+    
+    private boolean hasCameraPermission() {
+        return ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+    }
+    
+    private void checkCameraPermission() {
+        if (!hasCameraPermission()) {
+            ActivityCompat.requestPermissions(this, 
+                new String[]{android.Manifest.permission.CAMERA}, 
+                CAMERA_PERMISSION_REQUEST);
+        } else {
+            initCamera();
+        }
+    }
+    
+    private void initCamera() {
         try {
             cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
             cameraId = cameraManager.getCameraIdList()[0];
         } catch (Exception e) {
-            Toast.makeText(this, "Camera not available", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Camera error: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
-        
-        // Button click
-        torchButton.setOnClickListener(v -> {
-            if (vibrator != null) vibrator.vibrate(30);
-            animateButton();
-            toggleTorch();
-            
-            // Change icon
-            if (torchOn) {
-                torchIcon.setText("🔦");
+    }
+    
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == CAMERA_PERMISSION_REQUEST) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                initCamera();
+                Toast.makeText(this, "Camera permission granted!", Toast.LENGTH_SHORT).show();
             } else {
-                torchIcon.setText("💡");
+                Toast.makeText(this, "Camera permission required for torch", Toast.LENGTH_LONG).show();
             }
-        });
+        }
     }
     
     private void animateButton() {
@@ -153,6 +186,11 @@ public class MainActivity extends Activity {
     }
     
     private void toggleTorch() {
+        if (cameraManager == null || cameraId == null) {
+            Toast.makeText(this, "Camera not ready. Please restart app.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
         try {
             torchOn = !torchOn;
             cameraManager.setTorchMode(cameraId, torchOn);
@@ -164,23 +202,26 @@ public class MainActivity extends Activity {
                 btnGrad.setStroke(3, Color.WHITE);
                 statusText.setText("ON ⚡");
                 statusText.setTextColor(Color.parseColor("#FFEB3B"));
+                torchIcon.setText("💡");
                 Toast.makeText(this, "✨ Torch ON ✨", Toast.LENGTH_SHORT).show();
             } else {
                 btnGrad.setColor(Color.parseColor("#E94560"));
                 btnGrad.setStroke(3, Color.parseColor("#FF03DAC5"));
                 statusText.setText("OFF");
                 statusText.setTextColor(Color.parseColor("#9E9E9E"));
+                torchIcon.setText("🔦");
                 Toast.makeText(this, "🔦 Torch OFF", Toast.LENGTH_SHORT).show();
             }
         } catch (Exception e) {
-            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            torchOn = false;
         }
     }
     
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (torchOn && cameraManager != null) {
+        if (torchOn && cameraManager != null && cameraId != null) {
             try {
                 cameraManager.setTorchMode(cameraId, false);
             } catch (Exception e) {}
