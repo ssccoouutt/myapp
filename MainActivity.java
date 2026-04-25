@@ -1,378 +1,442 @@
 package com.example.torch;
 
 import android.app.Activity;
+import android.media.MediaPlayer;
+import android.media.MediaRecorder;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Vibrator;
-import android.view.View;
-import android.view.animation.Animation;
-import android.view.animation.AnimationUtils;
-import android.view.animation.RotateAnimation;
-import android.view.animation.ScaleAnimation;
+import android.os.Environment;
+import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.content.Context;
-import android.hardware.camera2.CameraManager;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.AnimationDrawable;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-import android.content.pm.PackageManager;
+import android.view.View;
+import android.view.animation.Animation;
+import android.view.animation.ScaleAnimation;
+import android.os.Vibrator;
+import android.content.Context;
+import android.media.MediaCodec;
+import android.media.MediaFormat;
+import android.media.MediaExtractor;
+import android.media.MediaMuxer;
+import java.io.IOException;
+import java.io.File;
+import android.os.Handler;
+import android.widget.ImageView;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
 import java.util.Random;
 
 public class MainActivity extends Activity {
-    private boolean torchOn = false;
-    private CameraManager cameraManager;
-    private String cameraId;
-    private View torchButton;
+    private MediaRecorder mediaRecorder;
+    private MediaPlayer mediaPlayer;
+    private String audioFilePath;
+    private boolean isRecording = false;
+    private boolean isPlaying = false;
+    private View recordButton;
+    private View playButton;
     private TextView statusText;
+    private TextView tomText;
     private Vibrator vibrator;
-    private TextView torchIcon;
-    private LinearLayout rootLayout;
-    private TextView intensityText;
-    private int brightness = 100;
+    private ImageView tomImageView;
     private Handler handler = new Handler();
     private Random random = new Random();
-    private static final int CAMERA_PERMISSION_REQUEST = 100;
     
-    // Dynamic colors
-    private int[] colors = {
-        Color.parseColor("#FF6B6B"), Color.parseColor("#4ECDC4"), 
-        Color.parseColor("#45B7D1"), Color.parseColor("#96CEB4"),
-        Color.parseColor("#FFEAA7"), Color.parseColor("#DDA0DD"),
-        Color.parseColor("#98D8C8"), Color.parseColor("#F7DC6F")
-    };
-    private int currentColorIndex = 0;
-
+    // Eye animation variables
+    private boolean eyesOpen = true;
+    private int eyeX = 150, eyeY = 200;
+    private int mouthState = 0;
+    
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
         vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+        audioFilePath = getExternalFilesDir(null).getAbsolutePath() + "/tom_voice.wav";
         
-        // Create main layout with animated gradient background
-        rootLayout = new LinearLayout(this);
-        rootLayout.setOrientation(LinearLayout.VERTICAL);
-        rootLayout.setGravity(android.view.Gravity.CENTER);
-        rootLayout.setPadding(32, 32, 32, 32);
-        rootLayout.setBackgroundColor(Color.parseColor("#1A1A2E"));
+        // Main layout
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(android.view.Gravity.CENTER);
+        root.setPadding(32, 32, 32, 32);
         
-        // Animated gradient background
-        AnimationDrawable animatedGradient = new AnimationDrawable();
-        animatedGradient.addFrame(createGradientDrawable(new int[]{Color.parseColor("#1A1A2E"), Color.parseColor("#16213E")}), 3000);
-        animatedGradient.addFrame(createGradientDrawable(new int[]{Color.parseColor("#16213E"), Color.parseColor("#0F3460")}), 3000);
-        animatedGradient.addFrame(createGradientDrawable(new int[]{Color.parseColor("#0F3460"), Color.parseColor("#1A1A2E")}), 3000);
-        animatedGradient.setOneShot(false);
-        rootLayout.setBackground(animatedGradient);
-        animatedGradient.start();
+        // Gradient background
+        GradientDrawable gradient = new GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            new int[] {Color.parseColor("#1A1A2E"), Color.parseColor("#16213E"), Color.parseColor("#0F3460")}
+        );
+        root.setBackground(gradient);
         
-        // App Title with animation
+        // Title
         TextView title = new TextView(this);
-        title.setText("✨ TORCH PRO MAX ✨");
-        title.setTextSize(32);
+        title.setText("😺 TALKING TOM 😺");
+        title.setTextSize(28);
         title.setTextColor(Color.WHITE);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         title.setGravity(android.view.Gravity.CENTER);
         title.setPadding(0, 0, 0, 8);
         
-        // Subtitle with glow effect
+        // Subtitle
         TextView subtitle = new TextView(this);
-        subtitle.setText("Dynamic Flashlight Experience");
+        subtitle.setText("Tap Record, speak, then Play!");
         subtitle.setTextSize(14);
-        subtitle.setTextColor(Color.parseColor("#CCFFFFFF"));
+        subtitle.setTextColor(Color.parseColor("#B3FFFFFF"));
         subtitle.setGravity(android.view.Gravity.CENTER);
-        subtitle.setPadding(0, 0, 0, 48);
+        subtitle.setPadding(0, 0, 0, 32);
         
-        // Main torch button container with shadow
-        android.widget.FrameLayout buttonContainer = new android.widget.FrameLayout(this);
-        LinearLayout.LayoutParams containerParams = new LinearLayout.LayoutParams(300, 300);
-        containerParams.gravity = android.view.Gravity.CENTER;
-        containerParams.setMargins(0, 0, 0, 32);
-        buttonContainer.setLayoutParams(containerParams);
+        // Tom's image (custom drawn)
+        tomImageView = new ImageView(this);
+        LinearLayout.LayoutParams imgParams = new LinearLayout.LayoutParams(400, 400);
+        imgParams.setMargins(0, 0, 0, 32);
+        tomImageView.setLayoutParams(imgParams);
+        updateTomFace();
         
-        // Multi-layer button for 3D effect
-        // Layer 1: Outer glow
-        View outerGlow = new View(this);
-        android.widget.FrameLayout.LayoutParams glowParams = new android.widget.FrameLayout.LayoutParams(320, 320);
-        glowParams.gravity = android.view.Gravity.CENTER;
-        outerGlow.setLayoutParams(glowParams);
-        GradientDrawable glowGrad = new GradientDrawable();
-        glowGrad.setShape(GradientDrawable.OVAL);
-        glowGrad.setColor(Color.parseColor("#20E94560"));
-        outerGlow.setBackground(glowGrad);
-        
-        // Layer 2: Main button
-        torchButton = new View(this);
-        android.widget.FrameLayout.LayoutParams buttonParams = new android.widget.FrameLayout.LayoutParams(280, 280);
-        buttonParams.gravity = android.view.Gravity.CENTER;
-        torchButton.setLayoutParams(buttonParams);
-        
-        GradientDrawable buttonGrad = new GradientDrawable();
-        buttonGrad.setShape(GradientDrawable.OVAL);
-        buttonGrad.setColor(Color.parseColor("#E94560"));
-        buttonGrad.setStroke(4, Color.parseColor("#FF03DAC5"));
-        torchButton.setBackground(buttonGrad);
-        torchButton.setClickable(true);
-        torchButton.setElevation(20);
-        torchButton.setTranslationZ(20);
-        
-        // Layer 3: Inner ring
-        View innerRing = new View(this);
-        android.widget.FrameLayout.LayoutParams ringParams = new android.widget.FrameLayout.LayoutParams(240, 240);
-        ringParams.gravity = android.view.Gravity.CENTER;
-        innerRing.setLayoutParams(ringParams);
-        GradientDrawable ringGrad = new GradientDrawable();
-        ringGrad.setShape(GradientDrawable.OVAL);
-        ringGrad.setStroke(2, Color.parseColor("#FFFFFF"));
-        ringGrad.setColor(Color.TRANSPARENT);
-        innerRing.setBackground(ringGrad);
-        
-        // Torch icon
-        torchIcon = new TextView(this);
-        torchIcon.setText("🔦");
-        torchIcon.setTextSize(80);
-        torchIcon.setTextColor(Color.WHITE);
-        android.widget.FrameLayout.LayoutParams iconParams = new android.widget.FrameLayout.LayoutParams(
-            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT);
-        iconParams.gravity = android.view.Gravity.CENTER;
-        torchIcon.setLayoutParams(iconParams);
-        
-        buttonContainer.addView(outerGlow);
-        buttonContainer.addView(torchButton);
-        buttonContainer.addView(innerRing);
-        buttonContainer.addView(torchIcon);
-        
-        // Status text with dynamic effects
+        // Status text
         statusText = new TextView(this);
-        statusText.setText("🔴 TORCH OFF");
-        statusText.setTextSize(22);
+        statusText.setText("🔴 Ready to record");
+        statusText.setTextSize(16);
         statusText.setTextColor(Color.parseColor("#9E9E9E"));
         statusText.setTypeface(null, android.graphics.Typeface.BOLD);
         statusText.setGravity(android.view.Gravity.CENTER);
-        statusText.setPadding(0, 16, 0, 8);
+        statusText.setPadding(0, 0, 0, 16);
         
-        // Brightness indicator
-        intensityText = new TextView(this);
-        intensityText.setText("⚡ INTENSITY: 0%");
-        intensityText.setTextSize(12);
-        intensityText.setTextColor(Color.parseColor("#88666666"));
-        intensityText.setGravity(android.view.Gravity.CENTER);
-        intensityText.setPadding(0, 0, 0, 16);
+        // Tom's speech bubble
+        tomText = new TextView(this);
+        tomText.setText("🎤 Say something!");
+        tomText.setTextSize(14);
+        tomText.setTextColor(Color.WHITE);
+        tomText.setBackgroundColor(Color.parseColor("#E94560"));
+        tomText.setPadding(24, 16, 24, 16);
+        tomText.setGravity(android.view.Gravity.CENTER);
         
-        // Instruction
-        TextView instruction = new TextView(this);
-        instruction.setText("Tap anywhere on the circle to toggle\nLong press for magic effect");
-        instruction.setTextSize(12);
-        instruction.setTextColor(Color.parseColor("#88666666"));
-        instruction.setGravity(android.view.Gravity.CENTER);
+        // Round the speech bubble corners
+        GradientDrawable bubbleBg = new GradientDrawable();
+        bubbleBg.setCornerRadius(30);
+        bubbleBg.setColor(Color.parseColor("#E94560"));
+        tomText.setBackground(bubbleBg);
+        
+        LinearLayout.LayoutParams bubbleParams = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        bubbleParams.setMargins(0, 0, 0, 24);
+        tomText.setLayoutParams(bubbleParams);
+        
+        // Button container
+        LinearLayout buttonRow = new LinearLayout(this);
+        buttonRow.setOrientation(LinearLayout.HORIZONTAL);
+        buttonRow.setGravity(android.view.Gravity.CENTER);
+        buttonRow.setPadding(0, 16, 0, 16);
+        
+        // Record button
+        recordButton = new View(this);
+        LinearLayout.LayoutParams recParams = new LinearLayout.LayoutParams(140, 140);
+        recParams.setMargins(16, 0, 16, 0);
+        recordButton.setLayoutParams(recParams);
+        
+        GradientDrawable recGrad = new GradientDrawable();
+        recGrad.setShape(GradientDrawable.OVAL);
+        recGrad.setColor(Color.parseColor("#E94560"));
+        recGrad.setStroke(3, Color.WHITE);
+        recordButton.setBackground(recGrad);
+        recordButton.setClickable(true);
+        recordButton.setElevation(12);
+        
+        TextView recIcon = new TextView(this);
+        recIcon.setText("🎙️");
+        recIcon.setTextSize(48);
+        recIcon.setTextColor(Color.WHITE);
+        android.widget.FrameLayout recContainer = new android.widget.FrameLayout(this);
+        recContainer.addView(recordButton);
+        recContainer.addView(recIcon, new android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.view.Gravity.CENTER));
+        
+        // Play button
+        playButton = new View(this);
+        LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(140, 140);
+        playParams.setMargins(16, 0, 16, 0);
+        playButton.setLayoutParams(playParams);
+        
+        GradientDrawable playGrad = new GradientDrawable();
+        playGrad.setShape(GradientDrawable.OVAL);
+        playGrad.setColor(Color.parseColor("#4ECDC4"));
+        playGrad.setStroke(3, Color.WHITE);
+        playButton.setBackground(playGrad);
+        playButton.setClickable(true);
+        playButton.setElevation(12);
+        
+        TextView playIcon = new TextView(this);
+        playIcon.setText("▶️");
+        playIcon.setTextSize(48);
+        playIcon.setTextColor(Color.WHITE);
+        android.widget.FrameLayout playContainer = new android.widget.FrameLayout(this);
+        playContainer.addView(playButton);
+        playContainer.addView(playIcon, new android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.view.Gravity.CENTER));
+        
+        buttonRow.addView(recContainer);
+        buttonRow.addView(playContainer);
         
         // Add all views
-        rootLayout.addView(title);
-        rootLayout.addView(subtitle);
-        rootLayout.addView(buttonContainer);
-        rootLayout.addView(statusText);
-        rootLayout.addView(intensityText);
-        rootLayout.addView(instruction);
+        root.addView(title);
+        root.addView(subtitle);
+        root.addView(tomImageView);
+        root.addView(statusText);
+        root.addView(tomText);
+        root.addView(buttonRow);
         
-        setContentView(rootLayout);
+        setContentView(root);
         
-        // Check camera permission
-        checkCameraPermission();
-        
-        // Button click listeners
-        torchButton.setOnClickListener(v -> {
-            if (hasCameraPermission()) {
-                if (vibrator != null) vibrator.vibrate(30);
-                animateButton();
-                toggleTorch();
+        // Setup record button
+        recordButton.setOnClickListener(v -> {
+            if (vibrator != null) vibrator.vibrate(30);
+            animateButton(recordButton);
+            if (!isRecording) {
+                startRecording();
             } else {
-                checkCameraPermission();
+                stopRecording();
             }
         });
         
-        // Long press for magic effect
-        torchButton.setOnLongClickListener(v -> {
-            if (torchOn) {
-                magicEffect();
+        // Setup play button
+        playButton.setOnClickListener(v -> {
+            if (vibrator != null) vibrator.vibrate(30);
+            animateButton(playButton);
+            if (!isPlaying) {
+                playRecording();
             } else {
-                Toast.makeText(this, "Turn on torch first for magic effect!", Toast.LENGTH_SHORT).show();
+                stopPlaying();
             }
-            return true;
         });
-    }
-    
-    private GradientDrawable createGradientDrawable(int[] colors) {
-        GradientDrawable gradient = new GradientDrawable(
-            GradientDrawable.Orientation.TL_BR, colors);
-        gradient.setGradientType(GradientDrawable.LINEAR_GRADIENT);
-        return gradient;
-    }
-    
-    private void magicEffect() {
-        // Color changing effect
-        new Thread(() -> {
-            for (int i = 0; i < 10; i++) {
-                runOnUiThread(() -> {
-                    int randomColor = colors[random.nextInt(colors.length)];
-                    GradientDrawable btnGrad = (GradientDrawable) torchButton.getBackground();
-                    btnGrad.setColor(randomColor);
-                    
-                    if (vibrator != null) vibrator.vibrate(50);
-                    Toast.makeText(this, "✨ MAGIC MODE ✨", Toast.LENGTH_SHORT).show();
-                });
-                try { Thread.sleep(200); } catch (Exception e) {}
-            }
-            runOnUiThread(() -> {
-                GradientDrawable btnGrad = (GradientDrawable) torchButton.getBackground();
-                btnGrad.setColor(Color.parseColor("#FFEB3B"));
-                Toast.makeText(MainActivity.this, "🌈 Color Magic Complete!", Toast.LENGTH_SHORT).show();
-            });
-        }).start();
-    }
-    
-    private void animateButton() {
-        // Scale animation
-        Animation scaleAnim = new ScaleAnimation(1f, 0.85f, 1f, 0.85f,
-            Animation.RELATIVE_TO_SELF, 0.5f,
-            Animation.RELATIVE_TO_SELF, 0.5f);
-        scaleAnim.setDuration(100);
-        scaleAnim.setRepeatMode(Animation.REVERSE);
-        scaleAnim.setRepeatCount(1);
         
-        // Rotation animation
-        Animation rotateAnim = new RotateAnimation(0, 360,
-            Animation.RELATIVE_TO_SELF, 0.5f,
-            Animation.RELATIVE_TO_SELF, 0.5f);
-        rotateAnim.setDuration(300);
-        rotateAnim.setRepeatCount(1);
+        // Animate Tom's eyes blinking
+        startEyeBlinking();
         
-        torchButton.startAnimation(scaleAnim);
-        torchIcon.startAnimation(rotateAnim);
+        // Animate mouth when recording/playing
+        startMouthAnimation();
     }
     
-    private boolean hasCameraPermission() {
-        return ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
-    }
-    
-    private void checkCameraPermission() {
-        if (!hasCameraPermission()) {
-            ActivityCompat.requestPermissions(this, 
-                new String[]{android.Manifest.permission.CAMERA}, 
-                CAMERA_PERMISSION_REQUEST);
+    private void updateTomFace() {
+        Bitmap bitmap = Bitmap.createBitmap(400, 400, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        Paint paint = new Paint();
+        paint.setAntiAlias(true);
+        
+        // Face background
+        paint.setColor(Color.parseColor("#F5A623"));
+        canvas.drawCircle(200, 200, 180, paint);
+        
+        // Ears
+        paint.setColor(Color.parseColor("#E0951A"));
+        canvas.drawCircle(80, 80, 50, paint);
+        canvas.drawCircle(320, 80, 50, paint);
+        
+        // Inner ears
+        paint.setColor(Color.parseColor("#FFC107"));
+        canvas.drawCircle(80, 80, 30, paint);
+        canvas.drawCircle(320, 80, 30, paint);
+        
+        // Eyes
+        if (eyesOpen) {
+            paint.setColor(Color.WHITE);
+            canvas.drawCircle(150, 180, 30, paint);
+            canvas.drawCircle(250, 180, 30, paint);
+            
+            paint.setColor(Color.BLACK);
+            canvas.drawCircle(150, 180, 15, paint);
+            canvas.drawCircle(250, 180, 15, paint);
+            
+            // Eye shine
+            paint.setColor(Color.WHITE);
+            canvas.drawCircle(140, 170, 5, paint);
+            canvas.drawCircle(240, 170, 5, paint);
         } else {
-            initCamera();
-        }
-    }
-    
-    private void initCamera() {
-        try {
-            cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
-            cameraId = cameraManager.getCameraIdList()[0];
-        } catch (Exception e) {
-            Toast.makeText(this, "Camera error: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
-    
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == CAMERA_PERMISSION_REQUEST) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                initCamera();
-                Toast.makeText(this, "✅ Camera permission granted!", Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(this, "Camera permission required for torch", Toast.LENGTH_LONG).show();
-            }
-        }
-    }
-    
-    private void toggleTorch() {
-        if (cameraManager == null || cameraId == null) {
-            Toast.makeText(this, "Camera not ready. Please restart app.", Toast.LENGTH_SHORT).show();
-            return;
+            paint.setColor(Color.BLACK);
+            canvas.drawRect(120, 170, 180, 190, paint);
+            canvas.drawRect(220, 170, 280, 190, paint);
         }
         
-        try {
-            torchOn = !torchOn;
-            cameraManager.setTorchMode(cameraId, torchOn);
-            
-            GradientDrawable btnGrad = (GradientDrawable) torchButton.getBackground();
-            AnimationDrawable bgAnim = (AnimationDrawable) rootLayout.getBackground();
-            
-            if (torchOn) {
-                // Torch ON - Dynamic effects
-                btnGrad.setColor(Color.parseColor("#FFEB3B"));
-                btnGrad.setStroke(4, Color.WHITE);
-                statusText.setText("💡 TORCH ON 💡");
-                statusText.setTextColor(Color.parseColor("#FFEB3B"));
-                torchIcon.setText("💡");
-                torchIcon.setTextSize(90);
-                intensityText.setText("⚡ INTENSITY: 100% ⚡");
-                intensityText.setTextColor(Color.parseColor("#FFEB3B"));
-                
-                // Animate background faster
-                bgAnim.start();
-                
-                // Pulse effect on button
-                animatePulse();
-                
-                // Change outer glow
-                View outerGlow = ((android.widget.FrameLayout) torchButton.getParent()).getChildAt(0);
-                GradientDrawable glowGrad = (GradientDrawable) outerGlow.getBackground();
-                glowGrad.setColor(Color.parseColor("#40FFEB3B"));
-                
-                Toast.makeText(this, "✨ TORCH ACTIVATED ✨", Toast.LENGTH_SHORT).show();
-            } else {
-                // Torch OFF
-                btnGrad.setColor(Color.parseColor("#E94560"));
-                btnGrad.setStroke(4, Color.parseColor("#FF03DAC5"));
-                statusText.setText("🔴 TORCH OFF");
-                statusText.setTextColor(Color.parseColor("#9E9E9E"));
-                torchIcon.setText("🔦");
-                torchIcon.setTextSize(80);
-                intensityText.setText("⚡ INTENSITY: 0%");
-                intensityText.setTextColor(Color.parseColor("#88666666"));
-                
-                // Reset outer glow
-                View outerGlow = ((android.widget.FrameLayout) torchButton.getParent()).getChildAt(0);
-                GradientDrawable glowGrad = (GradientDrawable) outerGlow.getBackground();
-                glowGrad.setColor(Color.parseColor("#20E94560"));
-                
-                Toast.makeText(this, "🔦 TORCH DEACTIVATED", Toast.LENGTH_SHORT).show();
-            }
-        } catch (Exception e) {
-            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
-            torchOn = false;
+        // Nose
+        paint.setColor(Color.parseColor("#FF6B6B"));
+        canvas.drawCircle(200, 230, 15, paint);
+        
+        // Mouth based on state
+        paint.setColor(Color.BLACK);
+        paint.setStrokeWidth(4);
+        paint.setStyle(Paint.Style.STROKE);
+        
+        if (mouthState == 0) {
+            // Happy smile
+            Path path = new Path();
+            path.moveTo(170, 270);
+            path.quadTo(200, 290, 230, 270);
+            canvas.drawPath(path, paint);
+        } else if (mouthState == 1) {
+            // Open mouth (talking)
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.BLACK);
+            canvas.drawRect(175, 265, 225, 295, paint);
+            paint.setColor(Color.RED);
+            canvas.drawRect(180, 270, 220, 290, paint);
+        } else {
+            // O mouth
+            paint.setStyle(Paint.Style.STROKE);
+            canvas.drawCircle(200, 280, 20, paint);
         }
+        
+        tomImageView.setImageBitmap(bitmap);
     }
     
-    private void animatePulse() {
+    private void startEyeBlinking() {
         handler.post(new Runnable() {
             @Override
             public void run() {
-                if (torchOn) {
-                    Animation pulse = new ScaleAnimation(1f, 1.05f, 1f, 1.05f,
-                        Animation.RELATIVE_TO_SELF, 0.5f,
-                        Animation.RELATIVE_TO_SELF, 0.5f);
-                    pulse.setDuration(800);
-                    pulse.setRepeatMode(Animation.REVERSE);
-                    pulse.setRepeatCount(Animation.INFINITE);
-                    torchButton.startAnimation(pulse);
+                eyesOpen = !eyesOpen;
+                updateTomFace();
+                handler.postDelayed(this, 3000 + random.nextInt(2000));
+            }
+        });
+    }
+    
+    private void startMouthAnimation() {
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (isRecording || isPlaying) {
+                    mouthState = (mouthState + 1) % 3;
+                    updateTomFace();
+                    handler.postDelayed(this, 150);
+                } else {
+                    mouthState = 0;
+                    updateTomFace();
+                    handler.postDelayed(this, 500);
                 }
             }
         });
     }
     
+    private void animateButton(View button) {
+        Animation anim = new ScaleAnimation(1f, 0.85f, 1f, 0.85f,
+            Animation.RELATIVE_TO_SELF, 0.5f,
+            Animation.RELATIVE_TO_SELF, 0.5f);
+        anim.setDuration(100);
+        anim.setRepeatMode(Animation.REVERSE);
+        anim.setRepeatCount(1);
+        button.startAnimation(anim);
+    }
+    
+    private void startRecording() {
+        try {
+            mediaRecorder = new MediaRecorder();
+            mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP);
+            mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB);
+            mediaRecorder.setOutputFile(audioFilePath);
+            mediaRecorder.prepare();
+            mediaRecorder.start();
+            
+            isRecording = true;
+            statusText.setText("🔴 RECORDING... Speak now!");
+            statusText.setTextColor(Color.parseColor("#FF6B6B"));
+            tomText.setText("🎤 Listening... Say something funny!");
+            
+            GradientDrawable btnGrad = (GradientDrawable) recordButton.getBackground();
+            btnGrad.setColor(Color.parseColor("#FF6B6B"));
+            
+            Toast.makeText(this, "Recording started!", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            e.printStackTrace();
+            Toast.makeText(this, "Failed to record: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+    
+    private void stopRecording() {
+        try {
+            if (mediaRecorder != null) {
+                mediaRecorder.stop();
+                mediaRecorder.release();
+                mediaRecorder = null;
+            }
+            
+            isRecording = false;
+            statusText.setText("✅ Recording saved! Tap PLAY to hear Tom!");
+            statusText.setTextColor(Color.parseColor("#4ECDC4"));
+            tomText.setText("✅ Got it! Now tap PLAY to hear me!");
+            
+            GradientDrawable btnGrad = (GradientDrawable) recordButton.getBackground();
+            btnGrad.setColor(Color.parseColor("#E94560"));
+            
+            Toast.makeText(this, "Recording saved!", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            e.printStackTrace();
+            Toast.makeText(this, "Error stopping recording", Toast.LENGTH_SHORT).show();
+        }
+    }
+    
+    private void playRecording() {
+        try {
+            mediaPlayer = new MediaPlayer();
+            mediaPlayer.setDataSource(audioFilePath);
+            mediaPlayer.prepare();
+            mediaPlayer.start();
+            
+            isPlaying = true;
+            statusText.setText("🔊 PLAYING... Tom is talking!");
+            statusText.setTextColor(Color.parseColor("#4ECDC4"));
+            tomText.setText("😺 " + getRandomTomPhrase());
+            
+            GradientDrawable btnGrad = (GradientDrawable) playButton.getBackground();
+            btnGrad.setColor(Color.parseColor("#FF6B6B"));
+            
+            mediaPlayer.setOnCompletionListener(mp -> {
+                stopPlaying();
+            });
+            
+            Toast.makeText(this, "🎵 Tom is speaking! 🎵", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            e.printStackTrace();
+            Toast.makeText(this, "No recording found! Please record something first.", Toast.LENGTH_LONG).show();
+        }
+    }
+    
+    private String getRandomTomPhrase() {
+        String[] phrases = {
+            "That's hilarious! 😂", "You sound funny! 🤣", "Let's do that again! 🎤",
+            "I love your voice! 💕", "You're awesome! ⭐", "Tell me more! 😺",
+            "Haha! That's great! 🎉", "I'm Tom the cat! 🐱", "This is fun! 🎵"
+        };
+        return phrases[random.nextInt(phrases.length)];
+    }
+    
+    private void stopPlaying() {
+        if (mediaPlayer != null) {
+            mediaPlayer.release();
+            mediaPlayer = null;
+        }
+        isPlaying = false;
+        statusText.setText("⏹️ Ready to record again!");
+        statusText.setTextColor(Color.parseColor("#9E9E9E"));
+        tomText.setText("🎤 Say something!");
+        
+        GradientDrawable btnGrad = (GradientDrawable) playButton.getBackground();
+        btnGrad.setColor(Color.parseColor("#4ECDC4"));
+    }
+    
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (torchOn && cameraManager != null && cameraId != null) {
-            try {
-                cameraManager.setTorchMode(cameraId, false);
-            } catch (Exception e) {}
+        if (mediaRecorder != null) {
+            mediaRecorder.release();
+        }
+        if (mediaPlayer != null) {
+            mediaPlayer.release();
         }
         handler.removeCallbacksAndMessages(null);
     }
