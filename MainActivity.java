@@ -16,19 +16,17 @@ import android.view.animation.Animation;
 import android.view.animation.ScaleAnimation;
 import android.os.Vibrator;
 import android.content.Context;
-import android.media.MediaCodec;
-import android.media.MediaFormat;
-import android.media.MediaExtractor;
-import android.media.MediaMuxer;
-import java.io.IOException;
-import java.io.File;
+import android.content.pm.PackageManager;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import android.os.Handler;
 import android.widget.ImageView;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.RectF;
+import java.io.File;
+import java.io.IOException;
 import java.util.Random;
 
 public class MainActivity extends Activity {
@@ -46,9 +44,11 @@ public class MainActivity extends Activity {
     private Handler handler = new Handler();
     private Random random = new Random();
     
-    // Eye animation variables
+    // Permission codes
+    private static final int PERMISSION_REQUEST_CODE = 100;
+    
+    // Eye and mouth animation
     private boolean eyesOpen = true;
-    private int eyeX = 150, eyeY = 200;
     private int mouthState = 0;
     
     @Override
@@ -57,6 +57,9 @@ public class MainActivity extends Activity {
         
         vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
         audioFilePath = getExternalFilesDir(null).getAbsolutePath() + "/tom_voice.wav";
+        
+        // Check and request permissions
+        checkPermissions();
         
         // Main layout
         LinearLayout root = new LinearLayout(this);
@@ -88,7 +91,7 @@ public class MainActivity extends Activity {
         subtitle.setGravity(android.view.Gravity.CENTER);
         subtitle.setPadding(0, 0, 0, 32);
         
-        // Tom's image (custom drawn)
+        // Tom's image
         tomImageView = new ImageView(this);
         LinearLayout.LayoutParams imgParams = new LinearLayout.LayoutParams(400, 400);
         imgParams.setMargins(0, 0, 0, 32);
@@ -109,11 +112,9 @@ public class MainActivity extends Activity {
         tomText.setText("🎤 Say something!");
         tomText.setTextSize(14);
         tomText.setTextColor(Color.WHITE);
-        tomText.setBackgroundColor(Color.parseColor("#E94560"));
         tomText.setPadding(24, 16, 24, 16);
         tomText.setGravity(android.view.Gravity.CENTER);
         
-        // Round the speech bubble corners
         GradientDrawable bubbleBg = new GradientDrawable();
         bubbleBg.setCornerRadius(30);
         bubbleBg.setColor(Color.parseColor("#E94560"));
@@ -132,57 +133,19 @@ public class MainActivity extends Activity {
         buttonRow.setPadding(0, 16, 0, 16);
         
         // Record button
-        recordButton = new View(this);
+        recordButton = createCircularButton("🎙️", Color.parseColor("#E94560"));
         LinearLayout.LayoutParams recParams = new LinearLayout.LayoutParams(140, 140);
         recParams.setMargins(16, 0, 16, 0);
         recordButton.setLayoutParams(recParams);
         
-        GradientDrawable recGrad = new GradientDrawable();
-        recGrad.setShape(GradientDrawable.OVAL);
-        recGrad.setColor(Color.parseColor("#E94560"));
-        recGrad.setStroke(3, Color.WHITE);
-        recordButton.setBackground(recGrad);
-        recordButton.setClickable(true);
-        recordButton.setElevation(12);
-        
-        TextView recIcon = new TextView(this);
-        recIcon.setText("🎙️");
-        recIcon.setTextSize(48);
-        recIcon.setTextColor(Color.WHITE);
-        android.widget.FrameLayout recContainer = new android.widget.FrameLayout(this);
-        recContainer.addView(recordButton);
-        recContainer.addView(recIcon, new android.widget.FrameLayout.LayoutParams(
-            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-            android.view.Gravity.CENTER));
-        
         // Play button
-        playButton = new View(this);
+        playButton = createCircularButton("▶️", Color.parseColor("#4ECDC4"));
         LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(140, 140);
         playParams.setMargins(16, 0, 16, 0);
         playButton.setLayoutParams(playParams);
         
-        GradientDrawable playGrad = new GradientDrawable();
-        playGrad.setShape(GradientDrawable.OVAL);
-        playGrad.setColor(Color.parseColor("#4ECDC4"));
-        playGrad.setStroke(3, Color.WHITE);
-        playButton.setBackground(playGrad);
-        playButton.setClickable(true);
-        playButton.setElevation(12);
-        
-        TextView playIcon = new TextView(this);
-        playIcon.setText("▶️");
-        playIcon.setTextSize(48);
-        playIcon.setTextColor(Color.WHITE);
-        android.widget.FrameLayout playContainer = new android.widget.FrameLayout(this);
-        playContainer.addView(playButton);
-        playContainer.addView(playIcon, new android.widget.FrameLayout.LayoutParams(
-            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-            android.view.Gravity.CENTER));
-        
-        buttonRow.addView(recContainer);
-        buttonRow.addView(playContainer);
+        buttonRow.addView(recordButton);
+        buttonRow.addView(playButton);
         
         // Add all views
         root.addView(title);
@@ -194,7 +157,7 @@ public class MainActivity extends Activity {
         
         setContentView(root);
         
-        // Setup record button
+        // Setup listeners
         recordButton.setOnClickListener(v -> {
             if (vibrator != null) vibrator.vibrate(30);
             animateButton(recordButton);
@@ -205,22 +168,69 @@ public class MainActivity extends Activity {
             }
         });
         
-        // Setup play button
         playButton.setOnClickListener(v -> {
             if (vibrator != null) vibrator.vibrate(30);
             animateButton(playButton);
-            if (!isPlaying) {
+            if (!isPlaying && !isRecording) {
                 playRecording();
-            } else {
+            } else if (isPlaying) {
                 stopPlaying();
+            } else {
+                Toast.makeText(this, "Stop recording first!", Toast.LENGTH_SHORT).show();
             }
         });
         
-        // Animate Tom's eyes blinking
+        // Start animations
         startEyeBlinking();
-        
-        // Animate mouth when recording/playing
         startMouthAnimation();
+    }
+    
+    private void checkPermissions() {
+        String[] permissions = {
+            android.Manifest.permission.RECORD_AUDIO,
+            android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            android.Manifest.permission.READ_EXTERNAL_STORAGE
+        };
+        
+        boolean allGranted = true;
+        for (String permission : permissions) {
+            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+                allGranted = false;
+                break;
+            }
+        }
+        
+        if (!allGranted) {
+            ActivityCompat.requestPermissions(this, permissions, PERMISSION_REQUEST_CODE);
+        }
+    }
+    
+    private View createCircularButton(String text, int color) {
+        android.widget.FrameLayout container = new android.widget.FrameLayout(this);
+        
+        View button = new View(this);
+        GradientDrawable grad = new GradientDrawable();
+        grad.setShape(GradientDrawable.OVAL);
+        grad.setColor(color);
+        grad.setStroke(3, Color.WHITE);
+        button.setBackground(grad);
+        button.setClickable(true);
+        button.setElevation(12);
+        
+        TextView icon = new TextView(this);
+        icon.setText(text);
+        icon.setTextSize(48);
+        icon.setTextColor(Color.WHITE);
+        android.widget.FrameLayout.LayoutParams iconParams = new android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.view.Gravity.CENTER);
+        icon.setLayoutParams(iconParams);
+        
+        container.addView(button, new android.widget.FrameLayout.LayoutParams(140, 140));
+        container.addView(icon, iconParams);
+        
+        return container;
     }
     
     private void updateTomFace() {
@@ -253,7 +263,6 @@ public class MainActivity extends Activity {
             canvas.drawCircle(150, 180, 15, paint);
             canvas.drawCircle(250, 180, 15, paint);
             
-            // Eye shine
             paint.setColor(Color.WHITE);
             canvas.drawCircle(140, 170, 5, paint);
             canvas.drawCircle(240, 170, 5, paint);
@@ -265,29 +274,26 @@ public class MainActivity extends Activity {
         
         // Nose
         paint.setColor(Color.parseColor("#FF6B6B"));
+        paint.setStyle(Paint.Style.FILL);
         canvas.drawCircle(200, 230, 15, paint);
         
-        // Mouth based on state
+        // Mouth
         paint.setColor(Color.BLACK);
         paint.setStrokeWidth(4);
         paint.setStyle(Paint.Style.STROKE);
         
         if (mouthState == 0) {
-            // Happy smile
             Path path = new Path();
             path.moveTo(170, 270);
             path.quadTo(200, 290, 230, 270);
             canvas.drawPath(path, paint);
         } else if (mouthState == 1) {
-            // Open mouth (talking)
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.BLACK);
-            canvas.drawRect(175, 265, 225, 295, paint);
+            canvas.drawOval(175, 265, 225, 295, paint);
             paint.setColor(Color.RED);
-            canvas.drawRect(180, 270, 220, 290, paint);
+            canvas.drawOval(180, 270, 220, 290, paint);
         } else {
-            // O mouth
-            paint.setStyle(Paint.Style.STROKE);
             canvas.drawCircle(200, 280, 20, paint);
         }
         
@@ -333,11 +339,24 @@ public class MainActivity extends Activity {
     }
     
     private void startRecording() {
+        if (!hasPermissions()) {
+            Toast.makeText(this, "Please grant microphone permissions", Toast.LENGTH_SHORT).show();
+            checkPermissions();
+            return;
+        }
+        
         try {
+            File audioFile = new File(audioFilePath);
+            if (audioFile.exists()) {
+                audioFile.delete();
+            }
+            
             mediaRecorder = new MediaRecorder();
             mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-            mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP);
-            mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB);
+            mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+            mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+            mediaRecorder.setAudioSamplingRate(44100);
+            mediaRecorder.setAudioBitRate(128000);
             mediaRecorder.setOutputFile(audioFilePath);
             mediaRecorder.prepare();
             mediaRecorder.start();
@@ -347,20 +366,22 @@ public class MainActivity extends Activity {
             statusText.setTextColor(Color.parseColor("#FF6B6B"));
             tomText.setText("🎤 Listening... Say something funny!");
             
-            GradientDrawable btnGrad = (GradientDrawable) recordButton.getBackground();
-            btnGrad.setColor(Color.parseColor("#FF6B6B"));
-            
-            Toast.makeText(this, "Recording started!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Recording started! Tap Stop when done.", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             e.printStackTrace();
             Toast.makeText(this, "Failed to record: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            stopRecording();
         }
     }
     
     private void stopRecording() {
         try {
             if (mediaRecorder != null) {
-                mediaRecorder.stop();
+                try {
+                    mediaRecorder.stop();
+                } catch (Exception e) {
+                    // Ignore stop errors
+                }
                 mediaRecorder.release();
                 mediaRecorder = null;
             }
@@ -370,9 +391,6 @@ public class MainActivity extends Activity {
             statusText.setTextColor(Color.parseColor("#4ECDC4"));
             tomText.setText("✅ Got it! Now tap PLAY to hear me!");
             
-            GradientDrawable btnGrad = (GradientDrawable) recordButton.getBackground();
-            btnGrad.setColor(Color.parseColor("#E94560"));
-            
             Toast.makeText(this, "Recording saved!", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             e.printStackTrace();
@@ -381,6 +399,12 @@ public class MainActivity extends Activity {
     }
     
     private void playRecording() {
+        File audioFile = new File(audioFilePath);
+        if (!audioFile.exists()) {
+            Toast.makeText(this, "No recording found! Please record something first.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        
         try {
             mediaPlayer = new MediaPlayer();
             mediaPlayer.setDataSource(audioFilePath);
@@ -392,51 +416,71 @@ public class MainActivity extends Activity {
             statusText.setTextColor(Color.parseColor("#4ECDC4"));
             tomText.setText("😺 " + getRandomTomPhrase());
             
-            GradientDrawable btnGrad = (GradientDrawable) playButton.getBackground();
-            btnGrad.setColor(Color.parseColor("#FF6B6B"));
-            
             mediaPlayer.setOnCompletionListener(mp -> {
                 stopPlaying();
             });
             
-            Toast.makeText(this, "🎵 Tom is speaking! 🎵", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Tom is speaking! 🎵", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             e.printStackTrace();
-            Toast.makeText(this, "No recording found! Please record something first.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Error playing recording", Toast.LENGTH_LONG).show();
         }
-    }
-    
-    private String getRandomTomPhrase() {
-        String[] phrases = {
-            "That's hilarious! 😂", "You sound funny! 🤣", "Let's do that again! 🎤",
-            "I love your voice! 💕", "You're awesome! ⭐", "Tell me more! 😺",
-            "Haha! That's great! 🎉", "I'm Tom the cat! 🐱", "This is fun! 🎵"
-        };
-        return phrases[random.nextInt(phrases.length)];
     }
     
     private void stopPlaying() {
         if (mediaPlayer != null) {
-            mediaPlayer.release();
+            try {
+                mediaPlayer.stop();
+                mediaPlayer.release();
+            } catch (Exception e) {}
             mediaPlayer = null;
         }
         isPlaying = false;
         statusText.setText("⏹️ Ready to record again!");
         statusText.setTextColor(Color.parseColor("#9E9E9E"));
         tomText.setText("🎤 Say something!");
-        
-        GradientDrawable btnGrad = (GradientDrawable) playButton.getBackground();
-        btnGrad.setColor(Color.parseColor("#4ECDC4"));
+    }
+    
+    private String getRandomTomPhrase() {
+        String[] phrases = {
+            "That's hilarious! 😂", "You sound funny! 🤣", "Let's do that again! 🎤",
+            "I love your voice! 💕", "You're awesome! ⭐", "Tell me more! 😺",
+            "Haha! That's great! 🎉", "I'm Tom the cat! 🐱", "This is fun! 🎵",
+            "Meow! That was purr-fect! 🐱", "Say something else! 🎙️"
+        };
+        return phrases[random.nextInt(phrases.length)];
+    }
+    
+    private boolean hasPermissions() {
+        return ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+    }
+    
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "Permissions granted! You can now record.", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "Microphone permission is required for this app!", Toast.LENGTH_LONG).show();
+            }
+        }
     }
     
     @Override
     protected void onDestroy() {
         super.onDestroy();
         if (mediaRecorder != null) {
-            mediaRecorder.release();
+            try {
+                mediaRecorder.stop();
+                mediaRecorder.release();
+            } catch (Exception e) {}
         }
         if (mediaPlayer != null) {
-            mediaPlayer.release();
+            try {
+                mediaPlayer.stop();
+                mediaPlayer.release();
+            } catch (Exception e) {}
         }
         handler.removeCallbacksAndMessages(null);
     }
